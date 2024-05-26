@@ -541,7 +541,7 @@ function onOsChanged() {
     return;
   }
 
-  var os_linux = os.includes('Linux');
+  var os_linux = os.includes('GNU/Linux');
   if (os_linux) {
     document.getElementById('linuxSelectDiv').style.display = 'block';
 
@@ -567,7 +567,7 @@ function onOptionsChanged() {
   var target = getTarget(language, os);
 
   var os_windows = os.includes('Windows');
-  var os_linux = os.includes('Linux');
+  var os_linux = os.includes('GNU/Linux');
   var os_mac = os.includes('macOS');
   var os_freebsd = os.includes('FreeBSD');
   var os_openbsd = os.includes('OpenBSD');
