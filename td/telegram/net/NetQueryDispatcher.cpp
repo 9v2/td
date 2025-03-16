@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,6 +11,7 @@
 #include "td/telegram/net/DcAuthManager.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/net/NetQueryDelayer.h"
+#include "td/telegram/net/NetQueryVerifier.h"
 #include "td/telegram/net/PublicRsaKeySharedCdn.h"
 #include "td/telegram/net/PublicRsaKeySharedMain.h"
 #include "td/telegram/net/PublicRsaKeyWatchdog.h"
@@ -31,10 +32,12 @@
 
 namespace td {
 
+#define TD_TEST_VERIFICATION 0
+
 void NetQueryDispatcher::complete_net_query(NetQueryPtr net_query) {
   auto callback = net_query->move_callback();
   if (callback.empty()) {
-    net_query->debug("sent to td (no callback)");
+    net_query->debug("sent to handler");
     send_closure_later(G()->td(), &Td::on_result, std::move(net_query));
   } else {
     net_query->debug("sent to callback", true);
@@ -55,7 +58,7 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
   if (check_stop_flag(net_query)) {
     return;
   }
-  if (G()->get_option_boolean("test_flood_wait")) {
+  if (false && G()->get_option_boolean("test_flood_wait")) {
     net_query->set_error(Status::Error(429, "Too Many Requests: retry after 10"));
     return complete_net_query(std::move(net_query));
     //    if (net_query->is_ok() && net_query->tl_constructor() == telegram_api::messages_sendMessage::ID) {
@@ -66,6 +69,16 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
     net_query->set_error(Status::Error(429, "Too Many Requests: retry after 10"));
     return complete_net_query(std::move(net_query));
   }
+#if TD_TEST_VERIFICATION
+  if (net_query->tl_constructor() == telegram_api::account_getAuthorizations::ID &&
+      !net_query->has_verification_prefix() && !net_query->is_ready()) {
+    net_query->set_error(Status::Error(403, "APNS_VERIFY_CHECK_ABCD"));
+  }
+  if (net_query->tl_constructor() == telegram_api::auth_sendCode::ID && !net_query->has_verification_prefix() &&
+      !net_query->is_ready()) {
+    net_query->set_error(Status::Error(403, "RECAPTCHA_CHECK_AB_CD__KEY"));
+  }
+#endif
 
   if (!net_query->in_sequence_dispatcher() && !net_query->get_chain_ids().empty()) {
     net_query->debug("sent to main sequence dispatcher");
@@ -92,6 +105,42 @@ void NetQueryDispatcher::dispatch(NetQueryPtr net_query) {
         return;
       }
       return send_closure_later(delayer_, &NetQueryDelayer::delay, std::move(net_query));
+#if TD_ANDROID || TD_DARWIN_IOS || TD_DARWIN_VISION_OS || TD_DARWIN_WATCH_OS || TD_TEST_VERIFICATION
+    } else if (code == 403) {
+      Slice captcha_prefix = "RECAPTCHA_CHECK_";
+      if (begins_with(net_query->error().message(), captcha_prefix)) {
+        net_query->debug("sent to NetQueryVerifier");
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (check_stop_flag(net_query)) {
+          return;
+        }
+        auto parameters = net_query->error().message().substr(captcha_prefix.size());
+        string action;
+        string recaptcha_key_id;
+        for (std::size_t i = 0; i + 1 < parameters.size(); i++) {
+          if (parameters[i] == '_' && parameters[i + 1] == '_') {
+            action = parameters.substr(0, i).str();
+            recaptcha_key_id = parameters.substr(i + 2).str();
+          }
+        }
+        return send_closure_later(verifier_, &NetQueryVerifier::check_recaptcha, std::move(net_query),
+                                  std::move(action), std::move(recaptcha_key_id));
+      }
+#if TD_ANDROID
+      Slice prefix("INTEGRITY_CHECK_CLASSIC_");
+#else
+      Slice prefix("APNS_VERIFY_CHECK_");
+#endif
+      if (begins_with(net_query->error().message(), prefix)) {
+        net_query->debug("sent to NetQueryVerifier");
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (check_stop_flag(net_query)) {
+          return;
+        }
+        string nonce = net_query->error().message().substr(prefix.size()).str();
+        return send_closure_later(verifier_, &NetQueryVerifier::verify, std::move(net_query), std::move(nonce));
+      }
+#endif
     }
   }
 
@@ -187,6 +236,7 @@ Status NetQueryDispatcher::wait_dc_init(DcId dc_id, bool force) {
     int32 session_count = get_session_count();
     bool use_pfs = get_use_pfs();
 
+    int32 main_session_scheduler_id = G()->get_main_session_scheduler_id();
     int32 slow_net_scheduler_id = G()->get_slow_net_scheduler_id();
 
     auto raw_dc_id = dc_id.get_raw_id();
@@ -195,8 +245,8 @@ Status NetQueryDispatcher::wait_dc_init(DcId dc_id, bool force) {
     int32 download_session_count = is_premium ? 8 : 2;
     int32 download_small_session_count = is_premium ? 8 : 2;
     dc.main_session_ = create_actor_on_scheduler<SessionMultiProxy>(
-        PSLICE() << "SessionMultiProxy:" << raw_dc_id << ":main", get_main_session_scheduler_id(), session_count,
-        auth_data, true, raw_dc_id == main_dc_id_, use_pfs, false, false, is_cdn);
+        PSLICE() << "SessionMultiProxy:" << raw_dc_id << ":main", main_session_scheduler_id, session_count, auth_data,
+        true, raw_dc_id == main_dc_id_, use_pfs, false, false, is_cdn);
     dc.upload_session_ = create_actor_on_scheduler<SessionMultiProxy>(
         PSLICE() << "SessionMultiProxy:" << raw_dc_id << ":upload", slow_net_scheduler_id, upload_session_count,
         auth_data, false, false, use_pfs, false, true, is_cdn);
@@ -232,6 +282,7 @@ void NetQueryDispatcher::stop() {
   std::lock_guard<std::mutex> guard(mutex_);
   stop_flag_ = true;
   delayer_.reset();
+  verifier_.reset();
   for (auto &dc : dcs_) {
     dc.main_session_.reset();
     dc.upload_session_.reset();
@@ -314,18 +365,17 @@ bool NetQueryDispatcher::get_use_pfs() {
   return G()->get_option_boolean("use_pfs") || get_session_count() > 1;
 }
 
-int32 NetQueryDispatcher::get_main_session_scheduler_id() {
-  return G()->use_sqlite_pmc() ? -1 : G()->get_database_scheduler_id();
-}
-
 NetQueryDispatcher::NetQueryDispatcher(const std::function<ActorShared<>()> &create_reference) {
   auto s_main_dc_id = G()->td_db()->get_binlog_pmc()->get("main_dc_id");
   if (!s_main_dc_id.empty()) {
     main_dc_id_ = to_integer<int32>(s_main_dc_id);
   }
   delayer_ = create_actor<NetQueryDelayer>("NetQueryDelayer", create_reference());
-  dc_auth_manager_ =
-      create_actor_on_scheduler<DcAuthManager>("DcAuthManager", get_main_session_scheduler_id(), create_reference());
+#if TD_ANDROID || TD_DARWIN_IOS || TD_DARWIN_VISION_OS || TD_DARWIN_WATCH_OS || TD_TEST_VERIFICATION
+  verifier_ = create_actor<NetQueryVerifier>("NetQueryVerifier", create_reference());
+#endif
+  dc_auth_manager_ = create_actor_on_scheduler<DcAuthManager>("DcAuthManager", G()->get_main_session_scheduler_id(),
+                                                              create_reference());
   public_rsa_key_watchdog_ = create_actor<PublicRsaKeyWatchdog>("PublicRsaKeyWatchdog", create_reference());
   sequence_dispatcher_ = MultiSequenceDispatcher::create("MultiSequenceDispatcher");
 
@@ -386,6 +436,14 @@ void NetQueryDispatcher::check_authorization_is_ok() {
     return;
   }
   send_closure(dc_auth_manager_, &DcAuthManager::check_authorization_is_ok);
+}
+
+void NetQueryDispatcher::set_verification_token(int64 verification_id, string &&token, Promise<Unit> &&promise) {
+  if (verifier_.empty()) {
+    return promise.set_error(Status::Error(400, "Application verification not allowed"));
+  }
+  send_closure_later(verifier_, &NetQueryVerifier::set_verification_token, verification_id, std::move(token),
+                     std::move(promise));
 }
 
 }  // namespace td

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -37,13 +37,14 @@ class SaveDraftMessageQuery final : public Td::ResultHandler {
     auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Write);
     if (input_peer == nullptr) {
       LOG(INFO) << "Can't update draft message because have no write access to " << dialog_id;
-      return on_error(Status::Error(400, "Can't save draft message"));
+      return on_error(Status::Error(400, "PEER_ID_INVALID"));
     }
 
     int32 flags = 0;
     telegram_api::object_ptr<telegram_api::InputReplyTo> input_reply_to;
     vector<telegram_api::object_ptr<telegram_api::MessageEntity>> input_message_entities;
     telegram_api::object_ptr<telegram_api::InputMedia> media;
+    int64 message_effect_id = 0;
     if (draft_message != nullptr) {
       CHECK(!draft_message->is_local());
       input_reply_to = draft_message->message_input_reply_to_.get_input_reply_to(td_, MessageId() /*TODO*/);
@@ -64,12 +65,16 @@ class SaveDraftMessageQuery final : public Td::ResultHandler {
       if (media != nullptr) {
         flags |= telegram_api::messages_saveDraft::MEDIA_MASK;
       }
+      if (draft_message->message_effect_id_.is_valid()) {
+        flags |= telegram_api::messages_saveDraft::EFFECT_MASK;
+        message_effect_id = draft_message->message_effect_id_.get();
+      }
     }
     send_query(G()->net_query_creator().create(
         telegram_api::messages_saveDraft(
             flags, false /*ignored*/, false /*ignored*/, std::move(input_reply_to), std::move(input_peer),
             draft_message == nullptr ? string() : draft_message->input_message_text_.text.text,
-            std::move(input_message_entities), std::move(media)),
+            std::move(input_message_entities), std::move(media), message_effect_id),
         {{dialog_id}}));
   }
 
@@ -93,7 +98,8 @@ class SaveDraftMessageQuery final : public Td::ResultHandler {
       // with the error "TOPIC_CLOSED", but the draft will be kept locally
       return promise_.set_value(Unit());
     }
-    if (!td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "SaveDraftMessageQuery")) {
+    if (!td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "SaveDraftMessageQuery") &&
+        status.message() != "PEER_ID_INVALID") {
       LOG(ERROR) << "Receive error for SaveDraftMessageQuery: " << status;
     }
     promise_.set_error(std::move(status));
@@ -381,7 +387,8 @@ bool DraftMessage::need_update_to(const DraftMessage &other, bool from_update) c
   if (is_local()) {
     return !from_update || other.is_local();
   }
-  if (message_input_reply_to_ == other.message_input_reply_to_ && input_message_text_ == other.input_message_text_) {
+  if (message_input_reply_to_ == other.message_input_reply_to_ && input_message_text_ == other.input_message_text_ &&
+      message_effect_id_ == other.message_effect_id_) {
     return date_ < other.date_;
   } else {
     return !from_update || date_ <= other.date_;
@@ -398,10 +405,10 @@ td_api::object_ptr<td_api::draftMessage> DraftMessage::get_draft_message_object(
   if (local_content_ != nullptr) {
     input_message_content = local_content_->get_draft_input_message_content_object();
   } else {
-    input_message_content = input_message_text_.get_input_message_text_object();
+    input_message_content = input_message_text_.get_input_message_text_object(td->user_manager_.get());
   }
   return td_api::make_object<td_api::draftMessage>(message_input_reply_to_.get_input_message_reply_to_object(td), date_,
-                                                   std::move(input_message_content));
+                                                   std::move(input_message_content), message_effect_id_.get());
 }
 
 DraftMessage::DraftMessage(Td *td, telegram_api::object_ptr<telegram_api::draftMessage> &&draft_message) {
@@ -428,6 +435,7 @@ DraftMessage::DraftMessage(Td *td, telegram_api::object_ptr<telegram_api::draftM
   }
   input_message_text_ = InputMessageText(std::move(draft_text), std::move(web_page_url), draft_message->no_webpage_,
                                          force_small_media, force_large_media, draft_message->invert_media_, false);
+  message_effect_id_ = MessageEffectId(draft_message->effect_);
 }
 
 Result<unique_ptr<DraftMessage>> DraftMessage::get_draft_message(
@@ -440,6 +448,7 @@ Result<unique_ptr<DraftMessage>> DraftMessage::get_draft_message(
   auto result = make_unique<DraftMessage>();
   result->message_input_reply_to_ = td->messages_manager_->create_message_input_reply_to(
       dialog_id, top_thread_message_id, std::move(draft_message->reply_to_), true);
+  result->message_effect_id_ = MessageEffectId(draft_message->effect_id_);
 
   auto input_message_content = std::move(draft_message->input_message_text_);
   if (input_message_content != nullptr) {

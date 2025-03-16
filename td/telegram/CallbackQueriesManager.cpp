@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,6 +12,7 @@
 #include "td/telegram/Global.h"
 #include "td/telegram/InlineQueriesManager.h"
 #include "td/telegram/MessagesManager.h"
+#include "td/telegram/net/NetQuery.h"
 #include "td/telegram/PasswordManager.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/td_api.h"
@@ -102,7 +103,17 @@ class SetBotCallbackAnswerQuery final : public Td::ResultHandler {
   explicit SetBotCallbackAnswerQuery(Promise<Unit> &&promise) : promise_(std::move(promise)) {
   }
 
-  void send(int32 flags, int64 callback_query_id, const string &text, const string &url, int32 cache_time) {
+  void send(int64 callback_query_id, const string &text, const string &url, bool show_alert, int32 cache_time) {
+    int32 flags = 0;
+    if (!text.empty()) {
+      flags |= telegram_api::messages_setBotCallbackAnswer::MESSAGE_MASK;
+    }
+    if (show_alert) {
+      flags |= telegram_api::messages_setBotCallbackAnswer::ALERT_MASK;
+    }
+    if (!url.empty()) {
+      flags |= telegram_api::messages_setBotCallbackAnswer::URL_MASK;
+    }
     send_query(G()->net_query_creator().create(telegram_api::messages_setBotCallbackAnswer(
         flags, false /*ignored*/, callback_query_id, text, url, cache_time)));
   }
@@ -130,18 +141,8 @@ CallbackQueriesManager::CallbackQueriesManager(Td *td) : td_(td) {
 
 void CallbackQueriesManager::answer_callback_query(int64 callback_query_id, const string &text, bool show_alert,
                                                    const string &url, int32 cache_time, Promise<Unit> &&promise) const {
-  int32 flags = 0;
-  if (!text.empty()) {
-    flags |= BOT_CALLBACK_ANSWER_FLAG_HAS_MESSAGE;
-  }
-  if (show_alert) {
-    flags |= BOT_CALLBACK_ANSWER_FLAG_NEED_SHOW_ALERT;
-  }
-  if (!url.empty()) {
-    flags |= BOT_CALLBACK_ANSWER_FLAG_HAS_URL;
-  }
   td_->create_handler<SetBotCallbackAnswerQuery>(std::move(promise))
-      ->send(flags, callback_query_id, text, url, cache_time);
+      ->send(callback_query_id, text, url, show_alert, cache_time);
 }
 
 tl_object_ptr<td_api::CallbackQueryPayload> CallbackQueriesManager::get_query_payload(int32 flags, BufferSlice &&data,
@@ -154,10 +155,10 @@ tl_object_ptr<td_api::CallbackQueryPayload> CallbackQueriesManager::get_query_pa
   }
 
   if (has_data) {
-    return make_tl_object<td_api::callbackQueryPayloadData>(data.as_slice().str());
+    return td_api::make_object<td_api::callbackQueryPayloadData>(data.as_slice().str());
   }
   if (has_game) {
-    return make_tl_object<td_api::callbackQueryPayloadGame>(game_short_name);
+    return td_api::make_object<td_api::callbackQueryPayloadGame>(game_short_name);
   }
   UNREACHABLE();
   return nullptr;
@@ -208,7 +209,7 @@ void CallbackQueriesManager::on_new_inline_query(
   }
   LOG_IF(ERROR, !td_->user_manager_->have_user(sender_user_id)) << "Receive unknown " << sender_user_id;
   if (!td_->auth_manager_->is_bot()) {
-    LOG(ERROR) << "Receive new callback query";
+    LOG(ERROR) << "Receive new inline callback query";
     return;
   }
   CHECK(inline_message_id != nullptr);
@@ -219,10 +220,38 @@ void CallbackQueriesManager::on_new_inline_query(
   }
   send_closure(
       G()->td(), &Td::send_update,
-      make_tl_object<td_api::updateNewInlineCallbackQuery>(
+      td_api::make_object<td_api::updateNewInlineCallbackQuery>(
           callback_query_id, td_->user_manager_->get_user_id_object(sender_user_id, "updateNewInlineCallbackQuery"),
           InlineQueriesManager::get_inline_message_id(std::move(inline_message_id)), chat_instance,
           std::move(payload)));
+}
+
+void CallbackQueriesManager::on_new_business_query(int64 callback_query_id, UserId sender_user_id,
+                                                   string &&connection_id,
+                                                   telegram_api::object_ptr<telegram_api::Message> &&message,
+                                                   telegram_api::object_ptr<telegram_api::Message> &&reply_to_message,
+                                                   BufferSlice &&data, int64 chat_instance) {
+  if (!sender_user_id.is_valid()) {
+    LOG(ERROR) << "Receive new callback query from invalid " << sender_user_id;
+    return;
+  }
+  LOG_IF(ERROR, !td_->user_manager_->have_user(sender_user_id)) << "Receive unknown " << sender_user_id;
+  if (!td_->auth_manager_->is_bot()) {
+    LOG(ERROR) << "Receive new business callback query";
+    return;
+  }
+  auto message_object =
+      td_->messages_manager_->get_business_message_object(std::move(message), std::move(reply_to_message));
+  if (message_object == nullptr) {
+    return;
+  }
+
+  auto payload = td_api::make_object<td_api::callbackQueryPayloadData>(data.as_slice().str());
+  send_closure(
+      G()->td(), &Td::send_update,
+      td_api::make_object<td_api::updateNewBusinessCallbackQuery>(
+          callback_query_id, td_->user_manager_->get_user_id_object(sender_user_id, "updateNewInlineCallbackQuery"),
+          connection_id, std::move(message_object), chat_instance, std::move(payload)));
 }
 
 void CallbackQueriesManager::send_callback_query(MessageFullId message_full_id,

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,6 +10,7 @@
 #include "td/telegram/InputMessageText.h"
 #include "td/telegram/logevent/LogEvent.h"
 #include "td/telegram/MessageContentType.h"
+#include "td/telegram/MessageEffectId.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessageInputReplyTo.h"
 #include "td/telegram/td_api.h"
@@ -46,6 +47,7 @@ class DraftMessage {
   MessageInputReplyTo message_input_reply_to_;
   InputMessageText input_message_text_;
   unique_ptr<DraftMessageContent> local_content_;
+  MessageEffectId message_effect_id_;
 
   friend class SaveDraftMessageQuery;
 

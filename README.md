@@ -21,7 +21,7 @@ TDLib (Telegram Database library) is a cross-platform library for building [Tele
 * **Cross-platform**: `TDLib` can be used on Android, iOS, Windows, macOS, Linux, FreeBSD, OpenBSD, NetBSD, illumos, Windows Phone, WebAssembly, watchOS, tvOS, visionOS, Tizen, Cygwin. It should also work on other *nix systems with or without minimal effort.
 * **Multilanguage**: `TDLib` can be easily used with any programming language that is able to execute C functions. Additionally, it already has native Java (using `JNI`) bindings and .NET (using `C++/CLI` and `C++/CX`) bindings.
 * **Easy to use**: `TDLib` takes care of all network implementation details, encryption and local data storage.
-* **High-performance**: in the [Telegram Bot API](https://core.telegram.org/bots/api), each `TDLib` instance handles more than 24000 active bots simultaneously.
+* **High-performance**: in the [Telegram Bot API](https://core.telegram.org/bots/api), each `TDLib` instance handles more than 25000 active bots simultaneously.
 * **Well-documented**: all `TDLib` API methods and public interfaces are fully documented.
 * **Consistent**: `TDLib` guarantees that all updates are delivered in the right order.
 * **Reliable**: `TDLib` remains stable on slow and unreliable Internet connections.
@@ -45,11 +45,11 @@ for a list of all available `TDLib` [methods](https://core.telegram.org/tdlib/do
 ## Dependencies
 `TDLib` depends on:
 
-* C++14 compatible compiler (Clang 3.4+, GCC 4.9+, MSVC 19.0+ (Visual Studio 2015+), Intel C++ Compiler 17+)
+* C++17 compatible compiler (Clang 5.0+, GCC 7.0+, MSVC 19.1+ (Visual Studio 2017.7+), Intel C++ Compiler 19+)
 * OpenSSL
 * zlib
 * gperf (build only)
-* CMake (3.0.2+, build only)
+* CMake (3.10+, build only)
 * PHP (optional, for documentation generation)
 
 <a name="building"></a>
@@ -103,7 +103,7 @@ target_link_libraries(YourTarget PRIVATE Td::TdStatic)
 
 Or you could install `TDLib` and then reference it in your CMakeLists.txt like this:
 ```
-find_package(Td 1.8.29 REQUIRED)
+find_package(Td 1.8.46 REQUIRED)
 target_link_libraries(YourTarget PRIVATE Td::TdStatic)
 ```
 See [example/cpp/CMakeLists.txt](https://github.com/tdlib/td/blob/master/example/cpp/CMakeLists.txt).

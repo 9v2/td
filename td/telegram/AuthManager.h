@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -41,7 +41,7 @@ class AuthManager final : public NetActor {
   void set_firebase_token(uint64 query_id, string token);
   void report_missing_code(uint64 query_id, string mobile_network_code);
   void set_email_address(uint64 query_id, string email_address);
-  void resend_authentication_code(uint64 query_id);
+  void resend_authentication_code(uint64 query_id, td_api::object_ptr<td_api::ResendCodeReason> &&reason);
   void check_email_code(uint64 query_id, EmailVerification &&code);
   void reset_email_address(uint64 query_id);
   void check_code(uint64 query_id, string code);
@@ -129,7 +129,7 @@ class AuthManager final : public NetActor {
   ActorShared<> parent_;
 
   // STATE
-  // from contructor
+  // from constructor
   int32 api_id_;
   string api_hash_;
 

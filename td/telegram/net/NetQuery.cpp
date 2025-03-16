@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -24,7 +24,7 @@ int VERBOSITY_NAME(net_query) = VERBOSITY_NAME(INFO);
 
 void NetQuery::debug(string state, bool may_be_lost) {
   may_be_lost_ = may_be_lost;
-  VLOG(net_query) << *this << " " << tag("state", state);
+  VLOG(net_query) << *this << " [" << state << ']';
   {
     auto guard = lock();
     auto &data = get_data_unsafe();
@@ -147,28 +147,39 @@ void NetQuery::set_error_impl(Status status, string source) {
   source_ = std::move(source);
 }
 
-StringBuilder &operator<<(StringBuilder &stream, const NetQuery &net_query) {
-  stream << "[Query:";
-  stream << tag("id", net_query.id());
-  stream << tag("tl", format::as_hex(net_query.tl_constructor()));
+StringBuilder &operator<<(StringBuilder &string_builder, const NetQuery &net_query) {
+  string_builder << "[Query:";
+  string_builder << tag("id", net_query.id());
+  string_builder << tag("tl", format::as_hex(net_query.tl_constructor()));
   auto message_id = net_query.message_id();
   if (message_id != 0) {
-    stream << tag("msg_id", format::as_hex(message_id));
+    string_builder << tag("msg_id", format::as_hex(message_id));
   }
   if (net_query.is_error()) {
-    stream << net_query.error();
+    string_builder << net_query.error();
   } else if (net_query.is_ok()) {
-    stream << tag("result_tl", format::as_hex(net_query.ok_tl_constructor()));
+    string_builder << tag("result_tl", format::as_hex(net_query.ok_tl_constructor()));
   }
-  stream << ']';
-  return stream;
+  string_builder << ']';
+  return string_builder;
 }
 
-StringBuilder &operator<<(StringBuilder &stream, const NetQueryPtr &net_query_ptr) {
+StringBuilder &operator<<(StringBuilder &string_builder, const NetQueryPtr &net_query_ptr) {
   if (net_query_ptr.empty()) {
-    return stream << "[Query: null]";
+    return string_builder << "[Query: null]";
   }
-  return stream << *net_query_ptr;
+  return string_builder << *net_query_ptr;
+}
+
+void NetQuery::add_verification_prefix(const string &prefix) {
+  CHECK(is_ready());
+  CHECK(is_error());
+  CHECK(!query_.empty());
+  BufferSlice query(prefix.size() + query_.size() - verification_prefix_length_);
+  query.as_mutable_slice().copy_from(prefix);
+  query.as_mutable_slice().substr(prefix.size()).copy_from(query_.as_slice().substr(verification_prefix_length_));
+  verification_prefix_length_ = narrow_cast<int32>(prefix.size());
+  query_ = std::move(query);
 }
 
 }  // namespace td

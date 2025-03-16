@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -53,6 +53,7 @@ class MessageEntity {
     MediaTimestamp,
     Spoiler,
     CustomEmoji,
+    ExpandableBlockQuote,
     Size
   };
   Type type = Type::Size;
@@ -80,7 +81,7 @@ class MessageEntity {
     CHECK(type == Type::CustomEmoji);
   }
 
-  tl_object_ptr<td_api::textEntity> get_text_entity_object() const;
+  tl_object_ptr<td_api::textEntity> get_text_entity_object(const UserManager *user_manager) const;
 
   bool operator==(const MessageEntity &other) const {
     return offset == other.offset && length == other.length && type == other.type &&
@@ -111,7 +112,7 @@ class MessageEntity {
   void parse(ParserT &parser);
 
  private:
-  tl_object_ptr<td_api::TextEntityType> get_text_entity_type_object() const;
+  tl_object_ptr<td_api::TextEntityType> get_text_entity_type_object(const UserManager *user_manager) const;
 
   static int get_type_priority(Type type);
 };
@@ -159,11 +160,15 @@ Result<vector<MessageEntity>> get_message_entities(const UserManager *user_manag
                                                    vector<tl_object_ptr<td_api::textEntity>> &&input_entities,
                                                    bool allow_all = false);
 
-vector<tl_object_ptr<td_api::textEntity>> get_text_entities_object(const vector<MessageEntity> &entities,
+vector<tl_object_ptr<td_api::textEntity>> get_text_entities_object(const UserManager *user_manager,
+                                                                   const vector<MessageEntity> &entities,
                                                                    bool skip_bot_commands, int32 max_media_timestamp);
 
-td_api::object_ptr<td_api::formattedText> get_formatted_text_object(const FormattedText &text, bool skip_bot_commands,
+td_api::object_ptr<td_api::formattedText> get_formatted_text_object(const UserManager *user_manager,
+                                                                    const FormattedText &text, bool skip_bot_commands,
                                                                     int32 max_media_timestamp);
+
+void keep_only_custom_emoji(FormattedText &text);
 
 void remove_premium_custom_emoji_entities(const Td *td, vector<MessageEntity> &entities, bool remove_unknown);
 
@@ -236,9 +241,6 @@ FormattedText get_message_text(const UserManager *user_manager, string message_t
                                const char *source);
 
 void truncate_formatted_text(FormattedText &text, size_t length);
-
-td_api::object_ptr<td_api::formattedText> extract_input_caption(
-    tl_object_ptr<td_api::InputMessageContent> &input_message_content);
 
 Result<FormattedText> get_formatted_text(const Td *td, DialogId dialog_id,
                                          td_api::object_ptr<td_api::formattedText> &&text, bool is_bot,
